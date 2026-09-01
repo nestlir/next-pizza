@@ -1,19 +1,21 @@
-import { Container } from "@/shared/components/container";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 
 export default function Home() {
   return (
     <main>
-      <Container>
-        <section className="py-10">
-          <h1 className="text-4xl font-bold">
-            Next Pizza 🍕
-          </h1>
+      <section>
+        <h1>Next Pizza 🍕</h1>
 
-          <p className="mt-3 text-lg">
-            Современный интернет-магазин пиццы на Next.js
-          </p>
-        </section>
-      </Container>
+        <p>
+          Современный интернет-магазин пиццы на Next.js
+        </p>
+      </section>
     </main>
   );
 }
