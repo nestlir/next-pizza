@@ -1,92 +1,97 @@
 'use server';
 
-import { prisma } from '@/prisma/prisma-client';
 import { cookies } from 'next/headers';
-import { CheckoutFormValues } from '@/shared/constants/checkout-form-schema';
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
+import { prisma } from '@/prisma/prisma-client';
+import { checkoutFormSchema } from '@/shared/constants/checkout-form-schema';
 import { createPayment } from '@/shared/lib/create-payment';
 import { sendOrderEmail } from '@/shared/lib/send-email';
-import { revalidatePath } from 'next/cache';
 
-export async function createOrder(data: CheckoutFormValues) {
+const cartTokenSchema = z.string().uuid();
+
+/** Creates an order snapshot and payment without destroying the cart on payment failure. */
+export async function createOrder(input: unknown) {
+  const data = checkoutFormSchema.parse(input);
   const cookieStore = await cookies();
-  const cartToken = cookieStore.get('cartToken')?.value;
-  if (!cartToken) throw new Error('Cart not found');
+  const rawToken = cookieStore.get('cartToken')?.value;
 
-  // Находим корзину
+  if (!rawToken) throw new Error('Cart not found');
+  const cartToken = cartTokenSchema.parse(rawToken);
+
   const cart = await prisma.cart.findUnique({
     where: { token: cartToken },
-    include: { items: { include: { productItem: true, selectedIngredients: true } } },
-  });
-  if (!cart || cart.items.length === 0) throw new Error('Cart is empty');
-
-  // Вычисляем общую сумму
-  const total = cart.items.reduce((sum, item) => {
-    const basePrice = item.productItem?.price || 0;
-    const ingredientsPrice = item.selectedIngredients?.reduce(
-      (s, si) => s + (si.ingredient?.price || 0) * (si.quantity || 1), 0
-    ) || 0;
-    return sum + (basePrice + ingredientsPrice) * item.quantity;
-  }, 0);
-
-  // Создаём заказ в транзакции
-  const order = await prisma.$transaction(async (tx) => {
-    const newOrder = await tx.order.create({
-      data: {
-        userId: cart.userId || 'anonymous',
-        total,
-        status: 'PENDING',
-        address: data.address,
-        comment: data.comment,
-        items: {
-          create: cart.items.map((item) => ({
-            productItemId: item.productItemId,
-            quantity: item.quantity,
-            price: item.productItem?.price || 0,
-            selectedIngredients: item.selectedIngredients,
-          })),
+    include: {
+      items: {
+        include: {
+          productItem: true,
+          selectedIngredients: { include: { ingredient: true } },
         },
       },
+    },
+  });
+
+  if (!cart || cart.items.length === 0) throw new Error('Cart is empty');
+
+  const total = cart.items.reduce((sum, item) => {
+    const ingredientTotal = item.selectedIngredients.reduce(
+      (ingredientSum, selected) =>
+        ingredientSum + selected.ingredient.price * (selected.quantity ?? 1),
+      0,
+    );
+    return sum + (item.productItem.price + ingredientTotal) * item.quantity;
+  }, 0);
+
+  if (!Number.isSafeInteger(total) || total <= 0) {
+    throw new Error('Invalid order total');
+  }
+
+  try {
+    const order = await prisma.$transaction(async (tx) =>
+      tx.order.create({
+        data: {
+          userId: cart.userId,
+          total,
+          status: 'PAYMENT_PENDING',
+          address: data.address.trim(),
+          comment: data.comment?.trim() || null,
+          items: {
+            create: cart.items.map((item) => ({
+              productItemId: item.productItemId,
+              quantity: item.quantity,
+              price: item.productItem.price,
+              selectedIngredients: item.selectedIngredients.map((selected) => ({
+                ingredientId: selected.ingredientId,
+                quantity: selected.quantity,
+              })),
+            })),
+          },
+        },
+      }),
+    );
+
+    const payment = await createPayment({
+      amount: total,
+      description: `Заказ #${order.id}`,
+      orderId: order.id,
     });
 
-    // Очищаем корзину
-    await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paymentId: payment.id },
+      });
+      await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+    });
 
-    return newOrder;
-  });
+    void sendOrderEmail({ order, paymentUrl: payment.confirmation_url }).catch((error) => {
+      console.error('order_email_failed', { orderId: order.id, error });
+    });
 
-  // Создаём платёж (YooKassa)
-  const payment = await createPayment({
-    amount: total,
-    description: `Заказ #${order.id}`,
-    orderId: order.id,
-  });
-
-  // Обновляем заказ с paymentId
-  await prisma.order.update({
-    where: { id: order.id },
-    data: { paymentId: payment.id },
-  });
-
-  // Отправляем email (асинхронно, можно без await)
-  sendOrderEmail({ order, paymentUrl: payment.confirmation_url });
-
-  revalidatePath('/profile');
-  return { url: payment.confirmation_url };
+    revalidatePath('/profile');
+    return { url: payment.confirmation_url, orderId: order.id };
+  } catch (error) {
+    console.error('create_order_failed', { cartId: cart.id, error });
+    throw new Error('Unable to create order');
+  }
 }
-EOFcat > shared/lib/create-payment.ts <<'EOF'
-import { YooKassa } from '@yookassa/sdk';
-
-const yooKassa = new YooKassa({
-  shopId: process.env.YOOKASSA_STORE_ID!,
-  secretKey: process.env.YOOKASSA_API_KEY!,
-});
-
-export const createPayment = async (data: { amount: number; description: string; orderId: string }) => {
-  const response = await yooKassa.createPayment({
-    amount: { value: data.amount, currency: 'RUB' },
-    description: data.description,
-    confirmation: { type: 'redirect', return_url: process.env.YOOKASSA_CALLBACK_URL! },
-    metadata: { orderId: data.orderId },
-  });
-  return { id: response.id, confirmation_url: response.confirmation.confirmation_url };
-};
