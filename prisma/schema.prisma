@@ -1,0 +1,182 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String              @id @default(cuid())
+  email             String              @unique
+  passwordHash      String
+  name              String?
+  phone             String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  cart              Cart?
+  orders            Order[]
+  verificationCodes VerificationCode[]
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  imageUrl    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+}
+
+model Product {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  price       Float
+  imageUrl    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  categoryId  String
+  category    Category  @relation(fields: [categoryId], references: [id])
+  items       ProductItem[]
+  ingredients ProductIngredient[]
+}
+
+model ProductItem {
+  id          String    @id @default(cuid())
+  sku         String    @unique
+  price       Float
+  stock       Int       @default(0)
+  attributes  Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+
+  // === ДОБАВЛЯЕМ ОБРАТНЫЕ СВЯЗИ ===
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+}
+
+model Ingredient {
+  id          String    @id @default(cuid())
+  name        String
+  price       Float     @default(0)
+  imageUrl    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    ProductIngredient[]
+  cartItems   CartItemIngredient[]
+}
+
+model ProductIngredient {
+  productId    String
+  ingredientId String
+  quantity     Int?
+  product      Product    @relation(fields: [productId], references: [id])
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  @@id([productId, ingredientId])
+}
+
+model Cart {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  items       CartItem[]
+}
+
+model CartItem {
+  id            String   @id @default(cuid())
+  quantity      Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  cartId        String
+  cart          Cart     @relation(fields: [cartId], references: [id])
+  productItemId String
+  productItem   ProductItem @relation(fields: [productItemId], references: [id])
+  selectedIngredients CartItemIngredient[]
+}
+
+model CartItemIngredient {
+  cartItemId   String
+  ingredientId String
+  quantity     Int?
+  cartItem     CartItem   @relation(fields: [cartItemId], references: [id])
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  @@id([cartItemId, ingredientId])
+}
+
+model Order {
+  id          String    @id @default(cuid())
+  total       Float
+  status      OrderStatus @default(PENDING)
+  address     String?
+  comment     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  items       OrderItem[]
+}
+
+model OrderItem {
+  id            String   @id @default(cuid())
+  quantity      Int
+  price         Float
+  createdAt     DateTime @default(now())
+  orderId       String
+  order         Order    @relation(fields: [orderId], references: [id])
+  productItemId String
+  productItem   ProductItem @relation(fields: [productItemId], references: [id])
+  selectedIngredients Json?
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+model VerificationCode {
+  id          String    @id @default(cuid())
+  code        String
+  type        CodeType  @default(EMAIL)
+  expiresAt   DateTime
+  used        Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+}
+
+enum CodeType {
+  EMAIL
+  PHONE
+}
+
+model Story {
+  id          String    @id @default(cuid())
+  title       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  items       StoryItem[]
+}
+
+model StoryItem {
+  id          String    @id @default(cuid())
+  mediaUrl    String
+  description String?
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  storyId     String
+  story       Story     @relation(fields: [storyId], references: [id])
+}
