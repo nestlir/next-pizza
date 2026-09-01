@@ -59,7 +59,7 @@ All monetary values are stored as integer minor units (kopecks). YooKassa receiv
 
 ## Checkout and payments
 
-Guest carts are identified by a signed-by-application, HTTP-only `cartToken` cookie and do not require a `User` row. Orders snapshot cart prices before payment. The cart is cleared only after YooKassa payment creation succeeds; payment failure leaves the cart intact and marks the order as `PAYMENT_FAILED`.
+Guest carts are identified by a random, HTTP-only `cartToken` cookie and do not require a `User` row. Orders snapshot cart prices before payment. The cart is cleared only after YooKassa payment creation succeeds; payment failure leaves the cart intact and marks the order as `PAYMENT_FAILED`.
 
 Payment webhooks validate their shape, match both the order ID and payment ID, and only perform allowed state transitions.
 
