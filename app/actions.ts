@@ -42,54 +42,58 @@ export async function createOrder(input: unknown) {
     return sum + (item.productItem.price + ingredientTotal) * item.quantity;
   }, 0);
 
-  if (!Number.isSafeInteger(total) || total <= 0) {
-    throw new Error('Invalid order total');
-  }
+  if (!Number.isSafeInteger(total) || total <= 0) throw new Error('Invalid order total');
 
   try {
-    const order = await prisma.$transaction(async (tx) =>
-      tx.order.create({
-        data: {
-          userId: cart.userId,
-          total,
-          status: 'PAYMENT_PENDING',
-          address: data.address.trim(),
-          comment: data.comment?.trim() || null,
-          items: {
-            create: cart.items.map((item) => ({
-              productItemId: item.productItemId,
-              quantity: item.quantity,
-              price: item.productItem.price,
-              selectedIngredients: item.selectedIngredients.map((selected) => ({
-                ingredientId: selected.ingredientId,
-                quantity: selected.quantity,
-              })),
+    const order = await prisma.order.create({
+      data: {
+        userId: cart.userId,
+        total,
+        status: 'PAYMENT_PENDING',
+        address: data.address.trim(),
+        comment: data.comment?.trim() || null,
+        items: {
+          create: cart.items.map((item) => ({
+            productItemId: item.productItemId,
+            quantity: item.quantity,
+            price: item.productItem.price,
+            selectedIngredients: item.selectedIngredients.map((selected) => ({
+              ingredientId: selected.ingredientId,
+              quantity: selected.quantity,
             })),
-          },
+          })),
         },
-      }),
-    );
-
-    const payment = await createPayment({
-      amount: total,
-      description: `Заказ #${order.id}`,
-      orderId: order.id,
+      },
     });
 
-    await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: order.id },
-        data: { paymentId: payment.id },
+    try {
+      const payment = await createPayment({
+        amount: total,
+        description: `Заказ #${order.id}`,
+        orderId: order.id,
       });
-      await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
-    });
 
-    void sendOrderEmail({ order, paymentUrl: payment.confirmation_url }).catch((error) => {
-      console.error('order_email_failed', { orderId: order.id, error });
-    });
+      await prisma.$transaction([
+        prisma.order.update({
+          where: { id: order.id },
+          data: { paymentId: payment.id },
+        }),
+        prisma.cartItem.deleteMany({ where: { cartId: cart.id } }),
+      ]);
 
-    revalidatePath('/profile');
-    return { url: payment.confirmation_url, orderId: order.id };
+      void sendOrderEmail({ orderId: order.id, email: data.email, paymentUrl: payment.confirmation_url }).catch(
+        (error) => console.error('order_email_failed', { orderId: order.id, error }),
+      );
+
+      revalidatePath('/profile');
+      return { url: payment.confirmation_url, orderId: order.id };
+    } catch (paymentError) {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { status: 'PAYMENT_FAILED' },
+      });
+      throw paymentError;
+    }
   } catch (error) {
     console.error('create_order_failed', { cartId: cart.id, error });
     throw new Error('Unable to create order');
