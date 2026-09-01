@@ -100,7 +100,6 @@ model CartItem {
   productItemId String
   productItem   ProductItem          @relation(fields: [productItemId], references: [id])
   selectedIngredients CartItemIngredient[]
-  @@unique([cartId, productItemId])
 }
 
 model CartItemIngredient {
