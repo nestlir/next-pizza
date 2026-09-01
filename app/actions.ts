@@ -7,6 +7,7 @@ import { prisma } from '@/prisma/prisma-client';
 import { checkoutFormSchema } from '@/shared/constants/checkout-form-schema';
 import { createPayment } from '@/shared/lib/create-payment';
 import { sendOrderEmail } from '@/shared/lib/send-email';
+import { calculateOrderTotal } from '@/shared/lib/order-total';
 
 const cartTokenSchema = z.string().uuid();
 
@@ -33,14 +34,16 @@ export async function createOrder(input: unknown) {
 
   if (!cart || cart.items.length === 0) throw new Error('Cart is empty');
 
-  const total = cart.items.reduce((sum, item) => {
-    const ingredientTotal = item.selectedIngredients.reduce(
-      (ingredientSum, selected) =>
-        ingredientSum + selected.ingredient.price * (selected.quantity ?? 1),
-      0,
-    );
-    return sum + (item.productItem.price + ingredientTotal) * item.quantity;
-  }, 0);
+  const total = calculateOrderTotal(
+    cart.items.map((item) => ({
+      quantity: item.quantity,
+      price: item.productItem.price,
+      ingredients: item.selectedIngredients.map((selected) => ({
+        price: selected.ingredient.price,
+        quantity: selected.quantity,
+      })),
+    })),
+  );
 
   if (!Number.isSafeInteger(total) || total <= 0) throw new Error('Invalid order total');
 
@@ -74,10 +77,7 @@ export async function createOrder(input: unknown) {
       });
 
       await prisma.$transaction([
-        prisma.order.update({
-          where: { id: order.id },
-          data: { paymentId: payment.id },
-        }),
+        prisma.order.update({ where: { id: order.id }, data: { paymentId: payment.id } }),
         prisma.cartItem.deleteMany({ where: { cartId: cart.id } }),
       ]);
 
@@ -88,10 +88,7 @@ export async function createOrder(input: unknown) {
       revalidatePath('/profile');
       return { url: payment.confirmation_url, orderId: order.id };
     } catch (paymentError) {
-      await prisma.order.update({
-        where: { id: order.id },
-        data: { status: 'PAYMENT_FAILED' },
-      });
+      await prisma.order.update({ where: { id: order.id }, data: { status: 'PAYMENT_FAILED' } });
       throw paymentError;
     }
   } catch (error) {
