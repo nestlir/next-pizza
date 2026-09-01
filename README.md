@@ -1,37 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Next Pizza
 
-## Getting Started
+Next.js pizza delivery application with PostgreSQL, Prisma, NextAuth, YooKassa and Resend.
 
-First, run the development server:
+## Requirements
+
+- Node.js 20+
+- PostgreSQL 16+
+- npm
+
+## Local setup
+
+1. Copy `.env.example` to `.env.local` and fill in the required secrets.
+2. Install dependencies:
+
+```bash
+npm ci
+```
+
+3. Start PostgreSQL:
+
+```bash
+docker compose up -d
+```
+
+4. Generate Prisma Client and apply migrations:
+
+```bash
+npx prisma generate
+npx prisma migrate deploy
+```
+
+5. For local development data, run:
+
+```bash
+npm run prisma:seed
+```
+
+6. Start the application:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Quality checks
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+CI runs the same quality gates against PostgreSQL.
 
-## Learn More
+## Money model
 
-To learn more about Next.js, take a look at the following resources:
+All monetary values are stored as integer minor units (kopecks). YooKassa receives a formatted RUB amount with two decimal places.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checkout and payments
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Guest carts are identified by a random, HTTP-only `cartToken` cookie and do not require a `User` row. Orders snapshot cart prices before payment. The cart is cleared only after YooKassa payment creation succeeds; payment failure leaves the cart intact and marks the order as `PAYMENT_FAILED`.
 
-## Deploy on Vercel
+Payment webhooks validate their shape, match both the order ID and payment ID, and only perform allowed state transitions.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Production
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# next-pizza
+The repository includes a standalone Next.js `Dockerfile`. Configure all variables from `.env.example` in the deployment environment. Never commit `.env.local` or real provider credentials.
